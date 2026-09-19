@@ -22,8 +22,8 @@ def _build_predictor(name: str, seed: int | None):
 
     print(
         "[ROLE 1] Using Role1FitnessPredictor (model_deployment_package). "
-        "Known gap: it cannot see absurdity/irony/relatability/trend_relevance "
-        "-- see memevolution/prediction/role1.py for details.\n"
+        "Known gap: output scale is an empirical approximation, not a confirmed "
+        "calibration -- see memevolution/prediction/role1.py for details.\n"
     )
     return Role1FitnessPredictor()
 

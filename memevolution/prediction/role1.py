@@ -1,28 +1,27 @@
 """Adapter around Role 1's deployed model (model_deployment_package/predictor.py).
 
-KNOWN GAPS -- read before trusting this predictor's numbers:
+STATUS
 
-1. Feature mismatch. Role 1's model was trained on post-metadata features
-   (duration, hashtags, mentions, upload timing, ...). It has NO signal for
-   `absurdity`, `irony`, `relatability`, `trend_relevance`, `topic`, `humor`,
-   `format`, or `hook` -- the exact traits Role 2's evolutionary loop
-   mutates and forms hypotheses about. In practice this means predicted
-   fitness only reacts to `video_length`, `caption_length`, and
-   `audio_strategy`; mutating tone/content traits will not move the
-   prediction at all. This is a data-contract gap for Role 1 to close
-   (e.g. engineered absurdity/irony features in Calcifer), not a bug here.
+Gap #1 (feature mismatch) is RESOLVED as of the model retrained with
+`absurdity`/`irony`/`relatability`/`trend_relevance` added to its feature
+set (confirmed 0.0-1.0 normalized, same scale MemeGenome uses -- no
+conversion needed). Predicted fitness now genuinely reacts to the traits
+Role 2's evolutionary loop mutates; verified empirically that varying each
+of the four traits independently moves the prediction (relatability has
+the strongest effect, absurdity/irony/trend_relevance more modest but real).
 
-2. Scale mismatch. The model's raw output is NOT a 0-1 fitness score --
-   empirically it lands roughly in [1.2, 4.0] for realistic genome-derived
-   inputs (see `_RAW_SCORE_LOW`/`_RAW_SCORE_HIGH` below), and can swing far
-   outside that (observed: -1000 to +2800) for feature combinations outside
-   its training distribution. This adapter (a) always sends fixed, safe
-   defaults for fields the genome has no signal for, to avoid the
-   extrapolation blowups, and (b) linearly rescales the realistic range
-   into [0, 1] so it satisfies Role 2's FitnessPrediction contract. The
-   rescaling bounds are an empirical guess, not a calibration Role 1 has
-   confirmed -- revisit once Role 1 documents what the training target
-   actually represents (raw engagement? log(views)? a composite score?).
+Gap #2 (scale mismatch) is still open, revised with the new model. The raw
+output is NOT a 0-1 fitness score -- empirically, for realistic
+genome-derived inputs, it's roughly p5=0.4 / p50=2.3 / p95=3.9 (see
+`_RAW_SCORE_LOW`/`_RAW_SCORE_HIGH` below), with a fat tail of extrapolation
+outliers (observed as far as -24 to +380) for feature-value combinations
+the tree model didn't see much of during training. This adapter (a) always
+sends fixed, safe defaults for fields the genome has no signal for, and (b)
+linearly rescales the realistic range into [0, 1], clamping outliers at the
+edges rather than propagating them -- an empirical guess, not a
+calibration Role 1 has confirmed. Revisit once Role 1 documents what the
+training target actually represents (raw engagement? log(views)? a
+composite score?).
 """
 
 from __future__ import annotations
@@ -39,20 +38,24 @@ from memevolution.models.prediction import FitnessPrediction
 
 # Empirically observed range of raw model output for realistic
 # genome-derived inputs (duration swept 3-60s, audio_strategy toggled,
+# absurdity/irony/relatability/trend_relevance swept 0.0-1.0,
 # caption_length pinned near the seed genome's value, everything else at
-# its safe default). See the module docstring, gap #2.
-_RAW_SCORE_LOW = 1.0
+# its safe default). Chosen to roughly bracket p5-p95 with headroom, not
+# the full min/max (which include tail extrapolation outliers). See the
+# module docstring, gap #2.
+_RAW_SCORE_LOW = 0.0
 _RAW_SCORE_HIGH = 4.5
 
 
 def _genome_to_features(genome: MemeGenome) -> dict:
     """Map the fields Role 2 actually has onto Role 1's feature schema.
 
-    Fields Role 2 has no signal for (ads, hashtags, mentions, upload
-    timing) get fixed safe defaults rather than being left to the
-    predictor's own fallback -- deliberately, so behavior doesn't change
-    if that fallback logic changes, and to stay inside the range this
-    adapter was calibrated against.
+    absurdity/irony/relatability/trend_relevance map directly -- both sides
+    use the same 0.0-1.0 scale. Fields Role 2 has no signal for (ads,
+    hashtags, mentions, upload timing) get fixed safe defaults rather than
+    being left to the predictor's own fallback -- deliberately, so behavior
+    doesn't change if that fallback logic changes, and to stay inside the
+    range this adapter was calibrated against.
     """
     return {
         "duration": genome.video_length,
@@ -65,6 +68,10 @@ def _genome_to_features(genome: MemeGenome) -> dict:
         "is_original_sound": 1 if genome.audio_strategy == "original_sound" else 0,
         "upload_hour": 12,
         "upload_day_of_week": 3,
+        "absurdity": genome.absurdity,
+        "irony": genome.irony,
+        "relatability": genome.relatability,
+        "trend_relevance": genome.trend_relevance,
     }
 
 
@@ -77,11 +84,10 @@ def _rescale(raw_score: float) -> float:
 class Role1FitnessPredictor:
     """Wraps Role 1's deployed XGBoost model behind the FitnessPredictor protocol.
 
-    This is the real historical-data model (unlike MockFitnessPredictor),
-    but see the module docstring for two known gaps: it can't see most of
-    the genome's traits, and its output scale is only approximately
-    normalized. Treat its numbers as directional, not precise, until Role 1
-    resolves gap #1 and confirms gap #2.
+    This is the real historical-data model (unlike MockFitnessPredictor).
+    Gap #1 (blind to genome traits) is resolved; gap #2 (output scale is an
+    empirical approximation, not a confirmed calibration) is still open --
+    see the module docstring.
     """
 
     def __init__(self) -> None:

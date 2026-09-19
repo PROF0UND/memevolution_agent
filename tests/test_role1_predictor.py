@@ -30,11 +30,17 @@ def test_role1_predictor_reacts_to_video_length(role1_predictor, genome_factory)
     assert short.fitness != long.fitness
 
 
-def test_role1_predictor_is_blind_to_absurdity(role1_predictor, genome_factory):
-    """Documents the known feature-schema gap (see role1.py's module docstring):
-    Role 1's model has no signal for absurdity, so this currently returns
-    the same prediction regardless. This test should start failing (in a
-    good way) once Role 1 adds tone/content features to the model."""
+def test_role1_predictor_reacts_to_absurdity(role1_predictor, genome_factory):
+    """Gap #1 (see role1.py's module docstring) used to mean the model was
+    blind to absurdity/irony/relatability/trend_relevance. That's resolved
+    now that Role 1's model was retrained with those features -- this test
+    used to assert the (bad) opposite of this."""
     low = role1_predictor.predict_fitness(genome_factory(absurdity=0.1))
     high = role1_predictor.predict_fitness(genome_factory(absurdity=0.9))
-    assert low.fitness == high.fitness
+    assert low.fitness != high.fitness
+
+
+def test_role1_predictor_reacts_to_relatability(role1_predictor, genome_factory):
+    low = role1_predictor.predict_fitness(genome_factory(relatability=0.1))
+    high = role1_predictor.predict_fitness(genome_factory(relatability=0.9))
+    assert low.fitness != high.fitness

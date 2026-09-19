@@ -61,28 +61,28 @@ It's the default for `python -m memevolution generate` (pass `--predictor
 mock` to use the heuristic stub instead). No other Role 2 code — `evolution/`,
 `agent/` — knows or cares which predictor is plugged in.
 
-**Two gaps in that integration, both documented in `role1.py`'s module
-docstring, and worth fixing with Role 1 before trusting this for a real
-demo of the learning loop:**
+**Two gaps were found in that integration, documented in `role1.py`'s
+module docstring:**
 
-1. **Feature mismatch.** Role 1's model was trained on post-metadata
-   (`duration`, `caption_length`, hashtags, mentions, upload timing) and has
-   no signal for `absurdity`/`irony`/`relatability`/`trend_relevance` — the
-   traits Role 2 actually evolves. Only `video_length`, `caption_length`,
-   and `audio_strategy` currently move the prediction; you can see this
-   directly in a demo run, where candidates that only differ in
-   absurdity/irony/relatability/trend_relevance come back with an identical
-   predicted fitness. Closing this needs Role 1 to add features (or
-   labeled data) that capture those tone/content qualities.
-2. **Scale mismatch.** The model's raw output isn't a 0–1 fitness score —
-   empirically it's ~1.2–4.0 for realistic inputs (and can swing to
-   -1000/+2800 for feature combinations outside its training
-   distribution, which is why the adapter always sends fixed, safe
-   defaults for fields the genome has no signal for). `role1.py` linearly
-   rescales an empirically-observed range into `[0, 1]` to satisfy
-   `FitnessPrediction`'s contract; this is a guess, not a calibration Role
-   1 has confirmed. Revisit once Role 1 documents what the training target
-   actually represents.
+1. **Feature mismatch — RESOLVED.** Role 1's model originally had no signal
+   for `absurdity`/`irony`/`relatability`/`trend_relevance` — the traits
+   Role 2 actually evolves — so mutating them never moved the prediction.
+   Role 1 retrained the model with those four traits added (confirmed
+   0.0–1.0 normalized, same scale `MemeGenome` uses, no conversion needed).
+   Verified empirically: varying each trait independently now moves the
+   prediction (`relatability` has the strongest effect; `absurdity`/
+   `irony`/`trend_relevance` more modest but real).
+2. **Scale mismatch — still open.** The model's raw output still isn't a
+   0–1 fitness score — empirically p5≈0.4 / p50≈2.3 / p95≈3.9 for realistic
+   inputs, with a fat tail of extrapolation outliers (observed as far as
+   -24 to +380) for feature-value combinations the tree model saw little
+   of during training. `role1.py` always sends fixed, safe defaults for
+   fields the genome has no signal for, and linearly rescales the
+   realistic range into `[0, 1]` (clamping outliers at the edges) to
+   satisfy `FitnessPrediction`'s contract. The rescaling bounds are an
+   empirical guess, not a calibration Role 1 has confirmed — revisit once
+   Role 1 documents what the training target actually represents (raw
+   engagement? log(views)? a composite score?).
 
 ## How to run the demo
 
@@ -145,13 +145,12 @@ numeric traits, and it is never used for mutation, selection, or learning.
 
 ## Assumptions / open integration points for other roles
 
-- **Role 1**: the real model is wired in (`Role1FitnessPredictor`), but see
-  the two gaps documented above and in `role1.py` — it can't see the
-  genome's tone/content traits, and its output scale is an empirical guess
-  rather than a confirmed calibration. `MockFitnessPredictor` remains
-  available (`--predictor mock`) as a heuristic that *does* react to
-  absurdity/irony/relatability/trend_relevance, useful for demoing the
-  evolutionary-loop concept independent of Role 1's current feature gap.
+- **Role 1**: the real model is wired in (`Role1FitnessPredictor`) and now
+  reacts to all four evolved traits (feature gap resolved). The output
+  scale is still an empirical guess rather than a confirmed calibration —
+  see gap #2 above and in `role1.py`. `MockFitnessPredictor` remains
+  available (`--predictor mock`) as a simpler, fully-understood heuristic
+  for demoing the evolutionary-loop concept independent of Role 1's model.
 - **Role 4 / TikTok**: `Deployment.timestamp`/`post_id` and all of
   `Observation` are populated by whatever Role 4 builds; Role 2 exposes
   `record_observation` / `apply_observation` as the two integration points
