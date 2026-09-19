@@ -1,5 +1,7 @@
-import joblib
+from pathlib import Path
+
 import pandas as pd
+import xgboost as xgb
 
 # The exact feature names and order the model expects
 EXPECTED_FEATURES = [
@@ -8,12 +10,20 @@ EXPECTED_FEATURES = [
     'is_original_sound', 'upload_hour', 'upload_day_of_week'
 ]
 
-# Load the model once when the module is imported
+MODEL_PATH = Path(__file__).resolve().parent / 'memetic_fitness_xgb.json'
+
+# Load the model once when the module is imported. Resolved relative to this
+# file (not the process's cwd) so importing this module works the same way
+# regardless of where it's run from. save_model()/load_model() is XGBoost's
+# own portable format -- unlike a joblib-pickled sklearn wrapper, it isn't
+# tied to matching pickle/ctypes internals between the training and
+# deployment environments.
 try:
-    model = joblib.load('memetic_fitness_model.joblib')
-except FileNotFoundError:
+    model = xgb.Booster()
+    model.load_model(str(MODEL_PATH))
+except Exception as exc:
     model = None
-    print("Warning: Model file not found. Please ensure 'memetic_fitness_model.joblib' is in the same directory.")
+    print(f"Warning: Failed to load model from '{MODEL_PATH}': {exc}")
 
 def preprocess_features(features: dict) -> pd.DataFrame:
     """
@@ -33,17 +43,17 @@ def preprocess_features(features: dict) -> pd.DataFrame:
         'upload_hour': 12,        # Noon
         'upload_day_of_week': 3   # Thursday
     }
-    
+
     # Merge defaults with provided features
     processed = {**defaults, **features}
-    
+
     # Create DataFrame with exact column order
     df = pd.DataFrame([processed], columns=EXPECTED_FEATURES)
-    
+
     # Ensure numeric types
     for col in EXPECTED_FEATURES:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-        
+
     return df
 
 def predict_fitness(features: dict) -> float:
@@ -53,8 +63,9 @@ def predict_fitness(features: dict) -> float:
     """
     if model is None:
         raise RuntimeError("Model not loaded. Cannot make predictions.")
-        
+
     input_df = preprocess_features(features)
-    prediction = model.predict(input_df)[0]
-    
+    dmatrix = xgb.DMatrix(input_df)
+    prediction = model.predict(dmatrix)[0]
+
     return float(round(prediction, 4))
