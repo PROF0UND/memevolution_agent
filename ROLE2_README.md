@@ -35,7 +35,8 @@ memevolution/
 │   └── learning.py      update_state()
 ├── prediction/
 │   ├── interface.py     FitnessPredictor protocol (Role 1 plugs in here)
-│   └── mock.py           MockFitnessPredictor — DEV STUB, not Calcifer
+│   ├── mock.py           MockFitnessPredictor — DEV STUB, not Calcifer
+│   └── role1.py          Role1FitnessPredictor — adapter around Role 1's real model
 ├── llm/
 │   └── gemini.py         GeminiConceptGenerator + MockConceptGenerator
 ├── persistence/
@@ -54,13 +55,34 @@ class FitnessPredictor(Protocol):
     def predict_fitness(self, genome: MemeGenome) -> FitnessPrediction: ...
 ```
 
-To plug in the real Calcifer-trained model, implement a class with that one
-method and pass an instance to `run_generation(state, predictor)` instead of
-`MockFitnessPredictor`. No other Role 2 code changes. Nothing in `evolution/`
-or `agent/` imports the mock or knows it's a stub — the CLI is the only
-place that currently constructs `MockFitnessPredictor`, and it prints a
-`[DEV STUB]` banner whenever it's used so a demo never implies the numbers
-came from Calcifer.
+`Role1FitnessPredictor` (`memevolution/prediction/role1.py`) implements it as
+a thin adapter around Role 1's deployed model in `model_deployment_package/`.
+It's the default for `python -m memevolution generate` (pass `--predictor
+mock` to use the heuristic stub instead). No other Role 2 code — `evolution/`,
+`agent/` — knows or cares which predictor is plugged in.
+
+**Two gaps in that integration, both documented in `role1.py`'s module
+docstring, and worth fixing with Role 1 before trusting this for a real
+demo of the learning loop:**
+
+1. **Feature mismatch.** Role 1's model was trained on post-metadata
+   (`duration`, `caption_length`, hashtags, mentions, upload timing) and has
+   no signal for `absurdity`/`irony`/`relatability`/`trend_relevance` — the
+   traits Role 2 actually evolves. Only `video_length`, `caption_length`,
+   and `audio_strategy` currently move the prediction; you can see this
+   directly in a demo run, where candidates that only differ in
+   absurdity/irony/relatability/trend_relevance come back with an identical
+   predicted fitness. Closing this needs Role 1 to add features (or
+   labeled data) that capture those tone/content qualities.
+2. **Scale mismatch.** The model's raw output isn't a 0–1 fitness score —
+   empirically it's ~1.2–4.0 for realistic inputs (and can swing to
+   -1000/+2800 for feature combinations outside its training
+   distribution, which is why the adapter always sends fixed, safe
+   defaults for fields the genome has no signal for). `role1.py` linearly
+   rescales an empirically-observed range into `[0, 1]` to satisfy
+   `FitnessPrediction`'s contract; this is a guess, not a calibration Role
+   1 has confirmed. Revisit once Role 1 documents what the training target
+   actually represents.
 
 ## How to run the demo
 
@@ -82,16 +104,16 @@ Run tests with:
 pytest
 ```
 
-## Replacing the mock predictor with Role 1's real model
+## Swapping predictors (`role1` vs `mock`)
 
-1. Implement `predict_fitness(self, genome: MemeGenome) -> FitnessPrediction`
-   on a class wrapping the trained model (map its output onto a 0.0-1.0
-   `fitness`, plus `confidence` if the model exposes one).
-2. In `cli.py::cmd_generate`, swap `MockFitnessPredictor(seed=args.seed)`
-   for an instance of that class (or wire it up however Role 1's package is
-   structured — a factory function, an env var, etc.).
-3. Nothing else changes: `generate_population`, `select_candidate`, and
-   `update_state` never reference the predictor's internals.
+`python -m memevolution generate --predictor {role1,mock}` (default: `role1`)
+picks which `FitnessPredictor` implementation gets passed to
+`run_generation`. If Role 1 ships a new/retrained model, the model artifact
+lives entirely in `model_deployment_package/` — update it there and
+`Role1FitnessPredictor` picks it up automatically. If the model's input
+features or output scale change, update `_genome_to_features` /
+`_rescale` in `role1.py` accordingly. Nothing in `evolution/` or `agent/`
+ever needs to change: they only see the `FitnessPredictor` protocol.
 
 ## How actual observations update the agent
 
@@ -123,10 +145,13 @@ numeric traits, and it is never used for mutation, selection, or learning.
 
 ## Assumptions / open integration points for other roles
 
-- **Role 1**: no real model exists yet, so `MockFitnessPredictor` is a
-  hand-picked linear heuristic over `absurdity/irony/relatability/
-  trend_relevance` plus noise — its numbers are not meaningful and must be
-  replaced before any real demo claims a prediction.
+- **Role 1**: the real model is wired in (`Role1FitnessPredictor`), but see
+  the two gaps documented above and in `role1.py` — it can't see the
+  genome's tone/content traits, and its output scale is an empirical guess
+  rather than a confirmed calibration. `MockFitnessPredictor` remains
+  available (`--predictor mock`) as a heuristic that *does* react to
+  absurdity/irony/relatability/trend_relevance, useful for demoing the
+  evolutionary-loop concept independent of Role 1's current feature gap.
 - **Role 4 / TikTok**: `Deployment.timestamp`/`post_id` and all of
   `Observation` are populated by whatever Role 4 builds; Role 2 exposes
   `record_observation` / `apply_observation` as the two integration points
